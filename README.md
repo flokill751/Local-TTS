@@ -1,37 +1,36 @@
-# 🎙️ Local-TTS — Assistente de Voz 100% Local
+# 🎙️ Local-TTS — Assistente de Voz Local (Bypass Smart App Control)
 
-Um assistente de voz que roda **completamente offline** na sua máquina, sem depender de nenhuma API externa paga.  
-Você fala → ele ouve → processa com IA → responde em voz alta.
+Um assistente de voz interativo que combina reconhecimento de fala, processamento de linguagem natural por meio de modelos locais (LLM) e síntese de voz offline em português.
+
+Esta versão foi adaptada para **contornar as restrições do Windows 11 Smart App Control**, garantindo que o projeto execute perfeitamente sem necessidade de desativar recursos de segurança do sistema.
 
 ---
 
-## 🧠 Como funciona
+## 🧠 Como funciona a arquitetura
 
-O projeto combina **três tecnologias** rodando localmente:
+O projeto combina três componentes principais:
 
 ```
 🎤 Microfone
     │
     ▼
-🔊 STT — Faster-Whisper  (fala → texto)
-    │
+🌐 STT — Google Web Speech API (fala → texto)
+    │   (Contorna bloqueio de DLLs do Smart App Control)
     ▼
-🤖 LLM — Ollama / LLaMA 3.1  (texto → resposta)
-    │
+🤖 LLM — Ollama / LLaMA 3.1 (texto → resposta do assistente)
+    │   (Processamento local via HTTP)
     ▼
-🔈 TTS — Piper  (resposta → áudio em português)
-    │
+🔈 TTS — Piper Local (resposta → áudio sintetizado em português)
+    │   (Executável nativo, 100% offline)
     ▼
 🔊 Alto-falante
 ```
 
-| Componente | Tecnologia | Descrição |
-|---|---|---|
-| **STT** | [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper) | Transcreve sua fala em texto (modelo `small`, offline) |
-| **LLM** | [Ollama](https://ollama.com) + LLaMA 3.1 | Processa o texto e gera uma resposta inteligente |
-| **TTS** | [Piper](https://github.com/rhasspy/piper) | Converte a resposta em áudio com voz em pt-BR |
-
-> **Personalidade:** O assistente já vem configurado com uma personalidade bem-humorada e sarcástica em português do Brasil 😄
+| Componente | Tecnologia | Tipo | Descrição |
+|---|---|---|---|
+| **STT** | [SpeechRecognition](https://github.com/Uberi/speech_recognition) (Google API) | Híbrido | Transcreve sua fala em texto de forma gratuita e sem necessidade de chaves de API. |
+| **LLM** | [Ollama](https://ollama.com) + LLaMA 3.1 | 100% Local | Processador inteligente que gera as respostas sarcásticas do assistente. |
+| **TTS** | [Piper TTS](https://github.com/rhasspy/piper) | 100% Local | Converte as respostas de texto para áudio utilizando o modelo de voz neural `pt_BR-faber-medium`. |
 
 ---
 
@@ -40,18 +39,18 @@ O projeto combina **três tecnologias** rodando localmente:
 ```
 Local-TTS/
 └── Back-end/
-    ├── agenty.py               # Script principal — o coração do projeto
-    ├── piper/                  # Executável do Piper TTS (Windows)
+    ├── agenty.py               # Script principal (assistente de voz)
+    ├── requirements.txt        # Dependências do Python atualizadas
+    ├── config.json             # Configurações de som salvas (gerado no 1º uso)
+    ├── piper/                  # Executável do Piper TTS
     │   ├── piper.exe
-    │   ├── espeak-ng.dll
-    │   ├── onnxruntime.dll
     │   └── ...
     ├── voz/                    # Modelo de voz em português brasileiro
     │   ├── pt_BR-faber-medium.onnx
     │   └── pt_BR-faber-medium.onnx.json
-    └── out/                    # Arquivos de áudio gerados durante uso
-        ├── mic.wav             # Gravação do microfone
-        └── reply.wav           # Resposta gerada pelo assistente
+    └── out/                    # Arquivos de áudio gerados durante o uso
+        ├── mic.wav             # Gravação capturada pelo microfone
+        └── reply.wav           # Resposta falada gerada pelo Piper
 ```
 
 ---
@@ -59,113 +58,57 @@ Local-TTS/
 ## ⚙️ Pré-requisitos
 
 ### 1. Python 3.10+
-Baixe em: https://www.python.org/downloads/
+Certifique-se de ter o Python instalado. Baixe em: https://www.python.org/downloads/
 
-### 2. Ollama (servidor LLM local)
-```bash
-# Baixe e instale em: https://ollama.com
-# Depois rode o modelo LLaMA 3.1:
-ollama run llama3.1
-```
-> O Ollama precisa estar rodando em segundo plano antes de iniciar o assistente.
-
-### 3. Dependências Python
-Instale todas com:
-```bash
-pip install faster-whisper sounddevice soundfile numpy requests
-```
+### 2. Ollama (servidor de IA local)
+1. Instale o Ollama de forma oficial através de: https://ollama.com
+2. Baixe o modelo LLaMA 3.1 rodando o comando no terminal:
+   ```bash
+   ollama run llama3.1
+   ```
+> O Ollama precisa estar ativo em segundo plano antes de iniciar o assistente.
 
 ---
 
-## 🚀 Como usar
+## 🚀 Instalação e Execução
 
 ### 1. Clone o repositório
 ```bash
-git clone git@github.com:flokill751/Local-TTS.git
+git clone https://github.com/flokill751/Local-TTS.git
 cd Local-TTS
 ```
 
-### 2. Instale as dependências
-```bash
-pip install faster-whisper sounddevice soundfile numpy requests
-```
+### 2. Configure o ambiente virtual e instale as dependências
+Navegue até a pasta `Back-end` e execute os comandos abaixo para criar seu ambiente virtual e instalar as bibliotecas necessárias:
 
-### 3. Suba o Ollama com o LLaMA 3.1
-Abra um terminal separado e rode:
-```bash
-ollama run llama3.1
-```
-
-### 4. Execute o assistente
-```bash
+```powershell
 cd Back-end
+
+# Cria o ambiente virtual
+python -m venv ambiente
+
+# Ativa o ambiente virtual
+.\ambiente\Scripts\Activate.ps1
+
+# Instala as dependências (usa o módulo python para contornar bloqueios do pip)
+python -m pip install -r requirements.txt
+```
+
+### 3. Rode o assistente de voz
+Com o ambiente virtual ativado e o Ollama rodando em outro terminal, execute o script:
+```powershell
 python agenty.py
 ```
 
 ---
 
-## 🎤 Usando o assistente
+## 🔊 Configurando Dispositivos de Áudio (1º Uso)
 
-Depois de rodar o script, o assistente vai:
+Na primeira execução do script `agenty.py`, o programa detectará e exibirá uma lista de todos os dispositivos de som conectados à sua máquina.
 
-1. Imprimir `✅ STT + LLM(HTTP local) + TTS(Piper)`
-2. Gravar **5 segundos** de áudio pelo microfone
-3. Transcrever o que você falou (Whisper)
-4. Enviar para o LLaMA 3.1 e gerar uma resposta
-5. Falar a resposta em voz alta (Piper, voz pt-BR)
-6. Repetir o ciclo automaticamente
+1. **Escolha o microfone:** Digite o número correspondente ao microfone que você deseja usar.
+2. **Escolha a saída de som:** Digite o número correspondente aos seus fones ou alto-falantes. 
+   - *Dica:* A opção `Mapeador de som da Microsoft - Output` (geralmente número `3`) é recomendada, pois ela segue automaticamente o dispositivo de som definido como padrão na barra de tarefas do Windows.
+3. Essas seleções serão armazenadas em `config.json`. 
 
-> Para sair, pressione **Ctrl + C**
-
----
-
-## ⚠️ Observações importantes
-
-- O projeto foi feito para **Windows** (o `piper.exe` e as DLLs incluídas são para Windows)
-- Na **primeira execução**, o Whisper vai baixar o modelo `small` (~500MB) automaticamente via internet
-- O Ollama com LLaMA 3.1 requer pelo menos **8GB de RAM** para rodar com fluidez
-- O modelo de voz já incluso é o `pt_BR-faber-medium` — uma voz masculina natural em português do Brasil
-- Se o Whisper estiver pesado, edite a linha 38 do `agenty.py` e troque `"small"` por `"base"` (mais leve, menos preciso)
-
----
-
-## 🔧 Personalização
-
-### Mudar a personalidade do assistente
-Edite a variável `SYSTEM_STYLE` no arquivo `agenty.py`:
-```python
-SYSTEM_STYLE = (
-    "Você é um assistente mais muito puto da vida "
-    "Responda em português do Brasil, diretamente puto. "
-    "Se fizer sentido, use uma pitada de mau humor."
-)
-```
-
-### Mudar o tempo de gravação
-Por padrão são **5 segundos** de gravação. Para alterar, edite a linha:
-```python
-record_wav(mic_wav, seconds=5)  # ← mude o valor aqui
-```
-
-### Mudar o modelo LLM
-Por padrão usa `llama3.1`. Para usar outro modelo (ex: `mistral`, `gemma`):
-```python
-OLLAMA_MODEL = "llama3.1"  # ← troque pelo nome do modelo no Ollama
-```
-
----
-
-## 🛠️ Tecnologias utilizadas
-
-- **Python** — linguagem principal
-- **[Faster-Whisper](https://github.com/SYSTRAN/faster-whisper)** — STT (Speech-to-Text) eficiente, versão otimizada do OpenAI Whisper
-- **[Ollama](https://ollama.com)** — servidor local para rodar LLMs como LLaMA, Mistral etc.
-- **[Piper TTS](https://github.com/rhasspy/piper)** — síntese de voz neural, rápida e offline
-- **sounddevice / soundfile** — gravação e reprodução de áudio
-- **numpy** — processamento de arrays de áudio
-
----
-
-## 📄 Licença
-
-Este projeto é de uso pessoal/educacional. Sinta-se livre para modificar e adaptar.
+> 💡 **Para redefinir o áudio:** Se desejar mudar de microfone ou fone de ouvido no futuro, basta deletar o arquivo `config.json` gerado na pasta `Back-end` e executar o assistente novamente para reconfigurar.
