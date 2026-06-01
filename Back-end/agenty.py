@@ -1,22 +1,23 @@
 import subprocess
-from pathlib import Path
 import time
+import json
+from pathlib import Path
 
 import numpy as np
 import requests
 import sounddevice as sd
 import soundfile as sf
-from faster_whisper import WhisperModel
+import speech_recognition as sr
 
 BASE = Path(__file__).resolve().parent
+CONFIG_FILE = BASE / "config.json"
+OUT_DIR = BASE / "out"
+OUT_DIR.mkdir(exist_ok=True)
 
-# ====== Piper (TTS) ======
+# ====== Piper (TTS - 100% Offline) ======
 PIPER_EXE = BASE / "piper" / "piper.exe"
 MODEL = BASE / "voz" / "pt_BR-faber-medium.onnx"
 CONFIG = BASE / "voz" / "pt_BR-faber-medium.onnx.json"
-
-OUT_DIR = BASE / "out"
-OUT_DIR.mkdir(exist_ok=True)
 
 def tts_piper(texto: str, out_wav: Path):
     p = subprocess.run(
@@ -28,33 +29,44 @@ def tts_piper(texto: str, out_wav: Path):
     if p.returncode != 0:
         raise RuntimeError(f"Piper falhou:\n{p.stderr}")
 
-def play_wav(wav_path: Path):
-    data, sr = sf.read(str(wav_path), dtype="float32")
-    sd.play(data, sr)
+def play_wav(wav_path: Path, device_id: int):
+    data, sr_val = sf.read(str(wav_path), dtype="float32")
+    sd.play(data, sr_val, device=device_id)
     sd.wait()
 
-# ====== STT (Whisper) ======
-# "small" é um bom equilíbrio. Se ficar pesado, use "base".
-stt = WhisperModel("small", device="cpu", compute_type="int8")
-
-def record_wav(out_path: Path, seconds=5, sr=16000):
-    print(f"\n🎤 Gravando {seconds}s... fale agora!")
-    audio = sd.rec(int(seconds * sr), samplerate=sr, channels=1, dtype="float32")
+# ====== STT (sounddevice + SpeechRecognition) ======
+def record_wav(out_path: Path, device_id: int, seconds=5, sr_rate=16000):
+    print(f"\n[MIC] Gravando {seconds}s... fale agora!")
+    audio = sd.rec(int(seconds * sr_rate), samplerate=sr_rate, channels=1, dtype="float32", device=device_id)
     sd.wait()
     audio = np.squeeze(audio)
-    sf.write(str(out_path), audio, sr)
+    sf.write(str(out_path), audio, sr_rate)
     return out_path
 
-def stt_whisper(wav_path: Path) -> str:
-    segments, _info = stt.transcribe(str(wav_path), language="pt")
-    text = " ".join(seg.text.strip() for seg in segments).strip()
-    return text
+def stt_google(wav_path: Path) -> str:
+    recognizer = sr.Recognizer()
+    try:
+        with sr.AudioFile(str(wav_path)) as source:
+            audio = recognizer.record(source)
+        # Transcrição do Google (gratuita e sem chaves necessárias)
+        text = recognizer.recognize_google(audio, language="pt-BR")
+        return text
+    except sr.UnknownValueError:
+        return ""
+    except sr.RequestError as e:
+        print(f"[Erro] Falha ao conectar com o serviço de STT: {e}")
+        return ""
+    except Exception as e:
+        print(f"[Erro] Erro inesperado no STT: {e}")
+        return ""
 
 # ====== LLM local via HTTP (Ollama) ======
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3.1"
 
 SYSTEM_STYLE = (
+    "VOCE TEM QUE FALAR NO IDIOMA FILHA DA PUTEZ."
+    "COM ODIO NO CORAÇAO"
     "Você é um assistente mais muito puto da vida "
     "Responda em português do Brasil, diretamente puto. "
     "Se fizer sentido, use uma pitada de mau humor."
@@ -70,39 +82,121 @@ def llm_ollama(user_text: str) -> str:
     r.raise_for_status()
     return r.json().get("response", "").strip()
 
-# ====== Loop ======
+# ====== Configuração de Dispositivos de Áudio ======
+def load_config():
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_config(config):
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=4, ensure_ascii=False)
+    except Exception as e:
+        print("[Erro] Falha ao salvar config.json:", e)
+
+def setup_devices():
+    config = load_config()
+    devices = sd.query_devices()
+    
+    input_device = config.get("input_device")
+    output_device = config.get("output_device")
+    
+    # Verifica se os IDs gravados no config ainda são válidos
+    if input_device is not None and output_device is not None:
+        if 0 <= input_device < len(devices) and 0 <= output_device < len(devices):
+            # Retorna direto se já estiver configurado
+            return input_device, output_device
+            
+    print("\n=== CONFIGURAÇÃO DE DISPOSITIVOS DE ÁUDIO ===")
+    print("Por favor, selecione os números dos seus dispositivos de som.")
+    
+    print("\n--- Microfones (Entrada de Áudio) Disponíveis ---")
+    for i, dev in enumerate(devices):
+        if dev['max_input_channels'] > 0:
+            print(f"[{i}] {dev['name']} ({dev['hostapi']})")
+            
+    while True:
+        try:
+            inp = input("\nEscolha o número do Microfone: ").strip()
+            inp_idx = int(inp)
+            if 0 <= inp_idx < len(devices) and devices[inp_idx]['max_input_channels'] > 0:
+                break
+            print("Número inválido para microfone.")
+        except ValueError:
+            print("Por favor, digite apenas números.")
+            
+    print("\n--- Fones/Alto-falantes (Saída de Áudio) Disponíveis ---")
+    for i, dev in enumerate(devices):
+        if dev['max_output_channels'] > 0:
+            print(f"[{i}] {dev['name']} ({dev['hostapi']})")
+            
+    while True:
+        try:
+            out = input("\nEscolha o número da Saída de Som: ").strip()
+            out_idx = int(out)
+            if 0 <= out_idx < len(devices) and devices[out_idx]['max_output_channels'] > 0:
+                break
+            print("Número inválido para saída de som.")
+        except ValueError:
+            print("Por favor, digite apenas números.")
+            
+    config["input_device"] = inp_idx
+    config["output_device"] = out_idx
+    save_config(config)
+    print(f"\n[OK] Configurações de áudio salvas em: {CONFIG_FILE.name}")
+    return inp_idx, out_idx
+
+# ====== Loop Principal ======
 def main():
-    print("✅ STT + LLM(HTTP local) + TTS(Piper)")
-    print("Dica: fale frases curtas. Ctrl+C para sair.\n")
+    # Carrega ou configura dispositivos
+    input_idx, output_idx = setup_devices()
+    
+    print("\n[OK] STT (Google API) + LLM (Ollama HTTP) + TTS (Piper Local)")
+    print("Dica: fale frases curtas. Pressione Ctrl+C para sair.\n")
+
+    # Fala de inicialização
+    reply_wav = OUT_DIR / "reply.wav"
+    try:
+        tts_piper("Pronto para ouvir.", reply_wav)
+        play_wav(reply_wav, output_idx)
+    except Exception as e:
+        print("[Erro TTS]:", e)
 
     while True:
         mic_wav = OUT_DIR / "mic.wav"
-        reply_wav = OUT_DIR / "reply.wav"
 
-        record_wav(mic_wav, seconds=5)
-        user_text = stt_whisper(mic_wav)
+        record_wav(mic_wav, input_idx, seconds=5)
+        user_text = stt_google(mic_wav)
 
         if not user_text:
-            print("🤷 Não peguei nada. Tenta de novo.")
+            print("[?] Nao entendi ou nao foi detectado audio. Tente novamente.")
             continue
 
-        print("📝 Você:", user_text)
+        print("[Voce]:", user_text)
 
         try:
             reply = llm_ollama(user_text)
         except Exception as e:
-            print("❌ Erro no Ollama HTTP:", e)
+            print("[Erro] Falha de conexao com o Ollama HTTP:", e)
+            print("Dica: Certifique-se de que o Ollama esta rodando em segundo plano (ollama run llama3.1)")
             continue
 
         if not reply:
-            print("🤖 (sem resposta do LLM)")
+            print("[IA]: (sem resposta do LLM)")
             continue
 
-        print("🤖 LLM:", reply)
-
-        tts_piper(reply, reply_wav)
-        print("🔊 Falando...")
-        play_wav(reply_wav)
+        print("[IA]:", reply)
+        
+        try:
+            tts_piper(reply, reply_wav)
+            play_wav(reply_wav, output_idx)
+        except Exception as e:
+            print("[Erro TTS]:", e)
 
         time.sleep(0.2)
 
